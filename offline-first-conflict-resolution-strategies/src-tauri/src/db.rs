@@ -144,6 +144,24 @@ impl Database {
         )?;
         Ok(())
     }
+    pub fn get_note_by_id(&self, id: &str) -> Result<Option<Note>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT id, title, content, created_at, updated_at, is_deleted, vector_clock
+            FROM notes WHERE id = ?1",
+            params![id],
+            |row| Ok(Note {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                content: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+                is_deleted: row.get::<_, i64>(5)? != 0,
+                vector_clock: row.get(6)?,
+            }),
+        ).optional()?;
+        Ok(result)
+    }
 }
 
 pub fn init(db_path: &str) -> Result<()> {

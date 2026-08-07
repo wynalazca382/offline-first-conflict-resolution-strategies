@@ -62,3 +62,19 @@ async function saveNote() {
 
 document.getElementById("save-btn")!.addEventListener("click", saveNote);
 loadNotes();
+
+async function syncNotes() {
+  const btn = document.getElementById("sync-btn")!;
+  btn.textContent = "Synchronizuję...";
+  try {
+    const result: string = await invoke("sync_notes");
+    document.getElementById("sync-status")!.textContent = result;
+    await loadNotes();
+  } catch (e) {
+    document.getElementById("sync-status")!.textContent = `Błąd: ${e}`;
+  } finally {
+    btn.textContent = "Synchronizuj";
+  }
+}
+
+document.getElementById("sync-btn")!.addEventListener("click", syncNotes);

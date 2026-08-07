@@ -20,5 +20,6 @@ pub struct Operation {
     pub vector_clock: Option<String>,
     pub timestamp: i64,
     pub device_id: String,
+    #[serde(default)]
     pub synced: bool,
 }
