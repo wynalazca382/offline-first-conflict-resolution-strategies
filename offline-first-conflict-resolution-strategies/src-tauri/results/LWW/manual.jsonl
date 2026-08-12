@@ -1,0 +1,4 @@
+{"strategy":"LWW","scenario":"manual","merge_duration_us":0,"payload_size_bytes":0,"conflicts_detected":0,"operations_lost":0,"metadata_size_bytes":0,"timestamp":1786517264914}
+{"strategy":"LWW","scenario":"manual","merge_duration_us":3942,"payload_size_bytes":386,"conflicts_detected":2,"operations_lost":0,"metadata_size_bytes":0,"timestamp":1786517330652}
+{"strategy":"LWW","scenario":"manual","merge_duration_us":0,"payload_size_bytes":0,"conflicts_detected":0,"operations_lost":0,"metadata_size_bytes":0,"timestamp":1786517422823}
+{"strategy":"LWW","scenario":"manual","merge_duration_us":3519,"payload_size_bytes":386,"conflicts_detected":2,"operations_lost":0,"metadata_size_bytes":0,"timestamp":1786517458019}

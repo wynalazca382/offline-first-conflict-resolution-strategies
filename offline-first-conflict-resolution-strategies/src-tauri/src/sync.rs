@@ -184,3 +184,17 @@ impl SyncStrategy for ORSetStrategy {
         Resolution::Remote
     }
 }
+use std::fs::OpenOptions;
+use std::io::Write;
+
+pub fn record_metrics(metrics: &SyncMetrics) {
+    let dir = std::path::Path::new("results").join(&metrics.strategy);
+    std::fs::create_dir_all(&dir).ok();
+    let path = dir.join(format!("{}.jsonl", metrics.scenario));
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .unwrap();
+    writeln!(file, "{}", serde_json::to_string(metrics).unwrap()).ok();
+}

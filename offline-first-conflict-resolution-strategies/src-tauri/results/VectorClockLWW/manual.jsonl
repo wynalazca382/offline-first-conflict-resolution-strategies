@@ -1,0 +1,6 @@
+{"strategy":"VectorClockLWW","scenario":"manual","merge_duration_us":0,"payload_size_bytes":0,"conflicts_detected":0,"operations_lost":0,"metadata_size_bytes":0,"timestamp":1786517092557}
+{"strategy":"VectorClockLWW","scenario":"manual","merge_duration_us":0,"payload_size_bytes":0,"conflicts_detected":0,"operations_lost":0,"metadata_size_bytes":0,"timestamp":1786517120990}
+{"strategy":"VectorClockLWW","scenario":"manual","merge_duration_us":0,"payload_size_bytes":0,"conflicts_detected":0,"operations_lost":0,"metadata_size_bytes":0,"timestamp":1786517125794}
+{"strategy":"VectorClockLWW","scenario":"manual","merge_duration_us":0,"payload_size_bytes":0,"conflicts_detected":0,"operations_lost":0,"metadata_size_bytes":0,"timestamp":1786517131416}
+{"strategy":"VectorClockLWW","scenario":"manual","merge_duration_us":0,"payload_size_bytes":0,"conflicts_detected":0,"operations_lost":0,"metadata_size_bytes":0,"timestamp":1786517155900}
+{"strategy":"VectorClockLWW","scenario":"manual","merge_duration_us":0,"payload_size_bytes":0,"conflicts_detected":0,"operations_lost":0,"metadata_size_bytes":0,"timestamp":1786517239083}

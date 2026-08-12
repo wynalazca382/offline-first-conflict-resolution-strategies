@@ -40,9 +40,20 @@ pub fn run() {
                     id
                 });
 
+            let strategy: Arc<dyn SyncStrategy> = match std::env::var("SYNC_STRATEGY")
+                .unwrap_or_else(|_| "LWW".to_string())
+                .as_str()
+            {
+                "VectorClockLWW" => Arc::new(sync::VectorClockLWWStrategy {
+                    device_id: device_id.clone(),
+                }),
+                "ORSet" => Arc::new(sync::ORSetStrategy),
+                _ => Arc::new(LWWStrategy),
+            };
+
             let state = AppState {
                 db,
-                strategy: Arc::new(LWWStrategy),
+                strategy,
                 device_id,
             };
 
@@ -164,7 +175,6 @@ fn delete_note(
 
 #[tauri::command]
 async fn sync_notes(state: tauri::State<'_, Mutex<AppState>>) -> Result<String, String> {
-    // Pobierz dane bez trzymania locka przez await
     let (device_id, last_sync, unsynced_ops, db, strategy) = {
         let s = state.lock().map_err(|e| e.to_string())?;
         let last_sync: i64 = s.db
@@ -179,7 +189,6 @@ async fn sync_notes(state: tauri::State<'_, Mutex<AppState>>) -> Result<String, 
     let server = "http://localhost:8000";
     let pushed = unsynced_ops.len();
 
-    // Push lokalnych operacji
     if !unsynced_ops.is_empty() {
         client.post(format!("{}/sync/push", server))
             .json(&unsynced_ops)
@@ -190,7 +199,6 @@ async fn sync_notes(state: tauri::State<'_, Mutex<AppState>>) -> Result<String, 
         }
     }
 
-    // Pull zdalnych operacji
     let resp = client
         .get(format!("{}/sync/pull/{}?since={}", server, device_id, last_sync))
         .send().await
@@ -206,7 +214,9 @@ async fn sync_notes(state: tauri::State<'_, Mutex<AppState>>) -> Result<String, 
     let server_time = json["server_time"].as_i64().unwrap_or_else(now_ms);
     let pulled = remote_ops.len();
 
-    // Zastosuj zdalne operacje przez strategię
+    let merge_start = std::time::Instant::now();
+    let mut conflicts = 0u32;
+
     for op in &remote_ops {
         let remote_note: Note = match serde_json::from_str(&op.payload) {
             Ok(n) => n,
@@ -214,18 +224,34 @@ async fn sync_notes(state: tauri::State<'_, Mutex<AppState>>) -> Result<String, 
         };
         match db.get_note_by_id(&remote_note.id).unwrap_or(None) {
             Some(local_note) => {
+                conflicts += 1;
                 match strategy.resolve_conflict(&local_note, &remote_note) {
-                    Resolution::Remote => { db.upsert_note(&remote_note).ok(); }
-                    Resolution::Local => {}
-                    Resolution::Merged(m) => { db.upsert_note(&m).ok(); }
+                    sync::Resolution::Remote => { db.upsert_note(&remote_note).ok(); }
+                    sync::Resolution::Local => {}
+                    sync::Resolution::Merged(m) => { db.upsert_note(&m).ok(); }
                 }
             }
             None => { db.upsert_note(&remote_note).ok(); }
         }
     }
 
+    let merge_duration_us = merge_start.elapsed().as_micros() as u64;
+    let payload_size: usize = remote_ops.iter().map(|op| op.payload.len()).sum();
+
+    let metrics = sync::SyncMetrics {
+        strategy: strategy.name().to_string(),
+        scenario: std::env::var("SCENARIO").unwrap_or_else(|_| "manual".to_string()),
+        merge_duration_us,
+        payload_size_bytes: payload_size,
+        conflicts_detected: conflicts,
+        operations_lost: 0,
+        metadata_size_bytes: 0,
+        timestamp: now_ms(),
+    };
+    sync::record_metrics(&metrics);
+
     db.set_meta("last_sync", &server_time.to_string())
         .map_err(|e| e.to_string())?;
 
-    Ok(format!("↑ {} | ↓ {}", pushed, pulled))
+    Ok(format!("↑ {} | ↓ {} | konflikty: {}", pushed, pulled, conflicts))
 }
