@@ -71,3 +71,11 @@ def pull_operations(device_id: str, since: int = 0):
 @app.get("/health")
 def health():
     return {"status": "ok", "time": int(time.time() * 1000)}
+
+@app.delete("/sync/reset")
+def reset_operations():
+    conn = get_db()
+    conn.execute("DELETE FROM operations")
+    conn.commit()
+    conn.close()
+    return {"status": "reset", "time": int(time.time() * 1000)}
