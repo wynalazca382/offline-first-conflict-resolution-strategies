@@ -148,8 +148,3 @@ Każdy wiersz w `results/S*/*.jsonl` to jeden pomiar z polami m.in. `strategy`, 
 | `GET` | `/health` | status serwera |
 | `DELETE` | `/sync/reset` | czyści wszystkie operacje (używane przez eksperymenty) |
 
-## Ograniczenia
-
-- `ORSetStrategy` w aplikacji przy konflikcie pojedynczej notatki zawsze wybiera wersję zdalną; pełne scalanie zbioru (`ORSetState::merge`) jest zaimplementowane, ale nie jest jeszcze podpięte do synchronizacji.
-- Aplikacja nie uzupełnia jeszcze zegarów wektorowych przy tworzeniu i edycji notatek (`vector_clock: None`), więc `VectorClockLWW` w aplikacji w praktyce działa jak LWW. Eksperymenty w Pythonie generują zegary samodzielnie.
-- Pole `operations_lost` w metrykach aplikacji jest zawsze `0`; utratę operacji liczą tylko skrypty eksperymentów.
