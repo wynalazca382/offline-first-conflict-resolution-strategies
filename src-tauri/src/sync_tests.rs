@@ -61,7 +61,7 @@ fn prepare_operation_increments_own_component() {
         timestamp: 0, device_id: "A".into(), synced: false,
     };
     vc().prepare_operation(&mut op);
-    let c = parse_clock(&op.vector_clock);
+    let c = VectorClockLWWStrategy::parse_clock(&op.vector_clock);
     assert_eq!(c["A"], 3);
     assert_eq!(c["B"], 7);
     assert!(op.timestamp > 0);
@@ -69,7 +69,7 @@ fn prepare_operation_increments_own_component() {
 
 #[test]
 fn merge_clocks_is_componentwise_max() {
-    let m = parse_clock(&merge_clocks(&Some(r#"{"A":3,"B":1}"#.into()), &Some(r#"{"B":4,"C":2}"#.into())));
+    let m = VectorClockLWWStrategy::parse_clock(&merge_clocks(&Some(r#"{"A":3,"B":1}"#.into()), &Some(r#"{"B":4,"C":2}"#.into())));
     assert_eq!((m["A"], m["B"], m["C"]), (3, 4, 2));
     assert_eq!(merge_clocks(&None, &None), None);
 }
