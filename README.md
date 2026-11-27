@@ -12,7 +12,7 @@ Projekt badawczy porównujący strategie rozwiązywania konfliktów synchronizac
 |---|---|:---:|:---:|
 | `LWW` | Last-Writer-Wins: wygrywa wersja z nowszym `updated_at` | ✓ | ✓ |
 | `VectorClockLWW` | Zegary wektorowe wykrywają relację *happens-before*; przy operacjach współbieżnych rozstrzyga znacznik czasu | ✓ | ✓ |
-| `ORSet` | Observed-Remove Set (add-wins): edycja wygrywa z usunięciem | ✓ (uproszczona) | ✓ |
+| `ORSet` | Observed-Remove Set (add-wins): współbieżna edycja wygrywa z usunięciem, dwie współbieżne edycje rozstrzyga znacznik czasu | ✓ | ✓ |
 | `Automerge` | Symulacja CRDT w stylu Automerge: deterministyczny tiebreak po ID aktora, zachowanie obu wersji | — | ✓ (symulacja) |
 
 Implementacja strategii w aplikacji: [src-tauri/src/sync.rs](src-tauri/src/sync.rs). Wariant `Automerge` nie korzysta z biblioteki Automerge, tylko symuluje jej zachowanie w [server/run_all_experiments.py](server/run_all_experiments.py).
@@ -26,16 +26,16 @@ Implementacja strategii w aplikacji: [src-tauri/src/sync.rs](src-tauri/src/sync.
 │       ├── lib.rs              # komendy Tauri: CRUD notatek + sync_notes
 │       ├── db.rs               # lokalna baza SQLite (notes, operations, sync_metadata)
 │       ├── models.rs           # Note, Operation
-│       └── sync.rs             # strategie (trait SyncStrategy) + zapis metryk
+│       ├── sync.rs             # strategie (trait SyncStrategy) + zapis metryk
+│       └── sync_tests.rs       # testy jednostkowe strategii i własności OR-Set
 ├── server/
 │   ├── main.py                 # serwer FastAPI
 │   ├── run_all_experiments.py  # wszystkie scenariusze S1–S5 dla 4 strategii
 │   ├── plot_results.py         # wykresy + summary.csv z wyników
-│   ├── s1_s2_conflicts.py      # pojedyncze scenariusze (starsze wersje)
-│   ├── s3_scalability.py
-│   ├── s4_multi_device.py
-│   ├── s5_network.py
-│   └── test_conflict.py        # ręczny test konfliktu dwóch urządzeń
+│   ├── stats.py                # statystyki opisowe, Shapiro-Wilk, Mann-Whitney, modele skalowania
+│   ├── test_strategies.py      # testy jednostkowe funkcji scalania i harnessu
+│   ├── test_conflict.py        # ręczny test konfliktu dwóch urządzeń
+│   └── legacy/                 # starsze skrypty scenariuszy (nieużywane do wyników)
 └── results/                    # wyniki eksperymentów (JSONL)
 ```
 
@@ -98,6 +98,7 @@ python -m uvicorn main:app --port 8000
 cd server
 python run_all_experiments.py      # ok. 10 min, z czego najdłużej trwa S5 (symulowane opóźnienia)
 python plot_results.py             # wykresy + tabela → results/plots/
+python stats.py                    # statystyki i testy → results/stats/
 ```
 
 Nadpisywane są pliki `results/S*/s*_results.jsonl`. Żeby zachować poprzedni przebieg, użyj `--out` z innym katalogiem i wtedy `plot_results.py --results <ten katalog>`. Szybki test bez czekania: `python run_all_experiments.py --repeats 3 --out ../results_test`.
@@ -117,7 +118,7 @@ Nadpisywane są pliki `results/S*/s*_results.jsonl`. Żeby zachować poprzedni p
 
 Opcje `run_all_experiments.py`: `--repeats N` (domyślnie 30), `--scenarios S1,S3` (wybrane scenariusze), `--out <katalog>` (domyślnie `results/` w katalogu głównym repozytorium). Serwer jest potrzebny tylko w S3 i S5. Każde powtórzenie ma stałe ziarno losowania, a wszystkie strategie dostają w nim identyczne dane wejściowe.
 
-Skrypty `s1_s2_conflicts.py`, `s3_scalability.py`, `s4_multi_device.py` i `s5_network.py` to starsze wersje z poprzednią, niespójną metodą liczenia utraty. Nie należy ich używać do wyników.
+Skrypty w `server/legacy/` to starsze wersje scenariuszy z poprzednią, niespójną metodą liczenia utraty. Nie należy ich używać do wyników.
 
 ## Scenariusze
 
@@ -137,7 +138,14 @@ Konflikty i utratę liczy wspólny mechanizm (`Replica` w [run_all_experiments.p
 - `operations_lost`: liczba operacji, których efektu nie ma w stanie końcowym, chociaż żadna późniejsza operacja ich nie nadpisała. Edycja jest zachowana, jeśli jej treść jest w wyniku (`content` lub `_conflicts`). Usunięcie jest zachowane, jeśli notatka jest usunięta. W S2 usunięcie i edycja wykluczają się, więc każda strategia traci dokładnie jedną operację; tu porównuje się `edit_wins`.
 - `merge_duration_us`: czas samych wywołań funkcji scalającej. W S1 i S2 to średnia z 1000 wywołań, bo pojedyncze trwa około 1 µs.
 
-Każdy wiersz w `results/S*/*.jsonl` to jeden pomiar z polami m.in. `strategy`, `scenario`, `merge_duration_us`, `payload_size_bytes`, `conflicts_detected`, `operations_lost`; S5 dodatkowo ma `sync_success` i `sync_duration_ms`. Katalog `results/S1_S2/` i plik `results/S3/s3_results_v2.jsonl` pochodzą ze starszych skryptów.
+Każdy wiersz w `results/S*/*.jsonl` to jeden pomiar z polami m.in. `strategy`, `scenario`, `merge_duration_us`, `payload_size_bytes`, `conflicts_detected`, `operations_lost`; S5 dodatkowo ma `sync_success` i `sync_duration_ms`.
+
+## Testy
+
+```bash
+cd src-tauri && cargo test                          # strategie Rust i własności OR-Set
+cd server && python -m unittest test_strategies -v  # funkcje scalania i harness
+```
 
 ## API serwera
 

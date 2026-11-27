@@ -5,10 +5,12 @@ use uuid::Uuid;
 mod db;
 mod sync;
 mod models;
+#[cfg(test)]
+mod sync_tests;
 
 use db::Database;
 use models::{Note, Operation};
-use sync::{LWWStrategy, SyncStrategy, Resolution, now_ms};
+use sync::{LWWStrategy, SyncStrategy, now_ms};
 
 pub struct AppState {
     pub db: Arc<Database>,
@@ -47,7 +49,9 @@ pub fn run() {
                 "VectorClockLWW" => Arc::new(sync::VectorClockLWWStrategy {
                     device_id: device_id.clone(),
                 }),
-                "ORSet" => Arc::new(sync::ORSetStrategy),
+                "ORSet" => Arc::new(sync::ORSetStrategy {
+                    device_id: device_id.clone(),
+                }),
                 _ => Arc::new(LWWStrategy),
             };
 
@@ -77,6 +81,34 @@ fn get_notes(state: tauri::State<Mutex<AppState>>) -> Vec<Note> {
     state.db.get_notes().unwrap_or_default()
 }
 
+/// Zapisuje nową wersję notatki i odpowiadającą jej operację w dzienniku.
+/// Metadane (znacznik czasu, zegar wektorowy) nadaje aktywna strategia
+/// przez prepare_operation; zegar jest kontynuacją zegara poprzedniej wersji.
+fn record_change(
+    state: &AppState,
+    mut note: Note,
+    previous_clock: Option<String>,
+    operation_type: &str,
+) -> Result<Note, String> {
+    let mut op = Operation {
+        id: Uuid::new_v4().to_string(),
+        note_id: note.id.clone(),
+        operation_type: operation_type.to_string(),
+        payload: String::new(),
+        vector_clock: previous_clock,
+        timestamp: 0,
+        device_id: state.device_id.clone(),
+        synced: false,
+    };
+    state.strategy.prepare_operation(&mut op);
+    note.updated_at = op.timestamp;
+    note.vector_clock = op.vector_clock.clone();
+    op.payload = serde_json::to_string(&note).map_err(|e| e.to_string())?;
+    state.db.upsert_note(&note).map_err(|e| e.to_string())?;
+    state.db.save_operation(&op).map_err(|e| e.to_string())?;
+    Ok(note)
+}
+
 #[tauri::command]
 fn create_note(
     state: tauri::State<Mutex<AppState>>,
@@ -94,19 +126,7 @@ fn create_note(
         is_deleted: false,
         vector_clock: None,
     };
-    state.db.upsert_note(&note).map_err(|e| e.to_string())?;
-    let op = Operation {
-        id: Uuid::new_v4().to_string(),
-        note_id: note.id.clone(),
-        operation_type: "CREATE".to_string(),
-        payload: serde_json::to_string(&note).unwrap(),
-        vector_clock: None,
-        timestamp: now,
-        device_id: state.device_id.clone(),
-        synced: false,
-    };
-    state.db.save_operation(&op).map_err(|e| e.to_string())?;
-    Ok(note)
+    record_change(&state, note, None, "CREATE")
 }
 
 #[tauri::command]
@@ -117,29 +137,17 @@ fn update_note(
     content: String,
 ) -> Result<Note, String> {
     let state = state.lock().unwrap();
-    let now = now_ms();
+    let prev = state.db.get_note_by_id(&id).map_err(|e| e.to_string())?;
     let note = Note {
         id,
         title,
         content,
-        created_at: now,
-        updated_at: now,
+        created_at: prev.as_ref().map(|p| p.created_at).unwrap_or_else(now_ms),
+        updated_at: 0,
         is_deleted: false,
         vector_clock: None,
     };
-    state.db.upsert_note(&note).map_err(|e| e.to_string())?;
-    let op = Operation {
-        id: Uuid::new_v4().to_string(),
-        note_id: note.id.clone(),
-        operation_type: "UPDATE".to_string(),
-        payload: serde_json::to_string(&note).unwrap(),
-        vector_clock: None,
-        timestamp: now,
-        device_id: state.device_id.clone(),
-        synced: false,
-    };
-    state.db.save_operation(&op).map_err(|e| e.to_string())?;
-    Ok(note)
+    record_change(&state, note, prev.and_then(|p| p.vector_clock), "UPDATE")
 }
 
 #[tauri::command]
@@ -148,28 +156,17 @@ fn delete_note(
     id: String,
 ) -> Result<(), String> {
     let state = state.lock().unwrap();
-    let now = now_ms();
+    let prev = state.db.get_note_by_id(&id).map_err(|e| e.to_string())?;
     let note = Note {
-        id: id.clone(),
+        id,
         title: String::new(),
         content: String::new(),
-        created_at: now,
-        updated_at: now,
+        created_at: prev.as_ref().map(|p| p.created_at).unwrap_or_else(now_ms),
+        updated_at: 0,
         is_deleted: true,
         vector_clock: None,
     };
-    state.db.upsert_note(&note).map_err(|e| e.to_string())?;
-    let op = Operation {
-        id: Uuid::new_v4().to_string(),
-        note_id: id,
-        operation_type: "DELETE".to_string(),
-        payload: serde_json::to_string(&note).unwrap(),
-        vector_clock: None,
-        timestamp: now,
-        device_id: state.device_id.clone(),
-        synced: false,
-    };
-    state.db.save_operation(&op).map_err(|e| e.to_string())?;
+    record_change(&state, note, prev.and_then(|p| p.vector_clock), "DELETE")?;
     Ok(())
 }
 
@@ -225,11 +222,16 @@ async fn sync_notes(state: tauri::State<'_, Mutex<AppState>>) -> Result<String, 
         match db.get_note_by_id(&remote_note.id).unwrap_or(None) {
             Some(local_note) => {
                 conflicts += 1;
-                match strategy.resolve_conflict(&local_note, &remote_note) {
-                    sync::Resolution::Remote => { db.upsert_note(&remote_note).ok(); }
-                    sync::Resolution::Local => {}
-                    sync::Resolution::Merged(m) => { db.upsert_note(&m).ok(); }
-                }
+                // Wynik „widział” obie wersje, więc dostaje maksimum obu zegarów
+                // (jak vc_max w harnessie eksperymentalnym).
+                let clock = sync::merge_clocks(&local_note.vector_clock, &remote_note.vector_clock);
+                let mut winner = match strategy.resolve_conflict(&local_note, &remote_note) {
+                    sync::Resolution::Remote => remote_note,
+                    sync::Resolution::Local => local_note,
+                    sync::Resolution::Merged(m) => m,
+                };
+                winner.vector_clock = clock;
+                db.upsert_note(&winner).ok();
             }
             None => { db.upsert_note(&remote_note).ok(); }
         }

@@ -35,12 +35,17 @@ async function saveNote() {
   const content = (document.getElementById("content") as HTMLTextAreaElement).value;
   if (!title.trim()) return;
 
-  if (editingId) {
-    await invoke("update_note", { id: editingId, title, content });
-    editingId = null;
-    document.getElementById("save-btn")!.textContent = "Dodaj notatkę";
-  } else {
-    await invoke("create_note", { title, content });
+  try {
+    if (editingId) {
+      await invoke("update_note", { id: editingId, title, content });
+      editingId = null;
+      document.getElementById("save-btn")!.textContent = "Dodaj notatkę";
+    } else {
+      await invoke("create_note", { title, content });
+    }
+  } catch (e) {
+    document.getElementById("sync-status")!.textContent = `Błąd zapisu: ${e}`;
+    return;
   }
 
   (document.getElementById("title") as HTMLInputElement).value = "";
@@ -56,7 +61,11 @@ async function saveNote() {
 };
 
 (window as any).deleteNote = async (id: string) => {
-  await invoke("delete_note", { id });
+  try {
+    await invoke("delete_note", { id });
+  } catch (e) {
+    document.getElementById("sync-status")!.textContent = `Błąd usuwania: ${e}`;
+  }
   await loadNotes();
 };
 

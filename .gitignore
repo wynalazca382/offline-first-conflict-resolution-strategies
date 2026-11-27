@@ -23,3 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 .venv
+
+# Python / wyniki lokalne
+__pycache__/
+*.pyc
+venv/
+server/server.db
+src-tauri/results/
+results_test/

@@ -43,6 +43,26 @@ pub fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
+pub fn parse_clock(s: &Option<String>) -> VectorClock {
+    s.as_deref()
+        .and_then(|v| serde_json::from_str(v).ok())
+        .unwrap_or_default()
+}
+
+/// Maksimum po składnikach — zegar wersji, która „widziała” obie wersje.
+pub fn merge_clocks(a: &Option<String>, b: &Option<String>) -> Option<String> {
+    let (ca, cb) = (parse_clock(a), parse_clock(b));
+    if ca.is_empty() && cb.is_empty() {
+        return None;
+    }
+    let mut out = ca;
+    for (k, v) in cb {
+        let e = out.entry(k).or_insert(0);
+        if v > *e { *e = v; }
+    }
+    Some(serde_json::to_string(&out).unwrap())
+}
+
 // ===== LWW =====
 
 pub struct LWWStrategy;
@@ -70,7 +90,7 @@ pub struct VectorClockLWWStrategy {
 }
 
 impl VectorClockLWWStrategy {
-    fn happens_before(a: &VectorClock, b: &VectorClock) -> bool {
+    pub(crate) fn happens_before(a: &VectorClock, b: &VectorClock) -> bool {
         let mut strictly_less = false;
         let keys: std::collections::HashSet<_> =
             a.keys().chain(b.keys()).collect();
@@ -82,12 +102,6 @@ impl VectorClockLWWStrategy {
         }
         strictly_less
     }
-
-    fn parse_clock(s: &Option<String>) -> VectorClock {
-        s.as_deref()
-            .and_then(|v| serde_json::from_str(v).ok())
-            .unwrap_or_default()
-    }
 }
 
 impl SyncStrategy for VectorClockLWWStrategy {
@@ -95,14 +109,14 @@ impl SyncStrategy for VectorClockLWWStrategy {
 
     fn prepare_operation(&self, op: &mut Operation) {
         op.timestamp = now_ms();
-        let mut clock: VectorClock = Self::parse_clock(&op.vector_clock);
+        let mut clock: VectorClock = parse_clock(&op.vector_clock);
         *clock.entry(self.device_id.clone()).or_insert(0) += 1;
         op.vector_clock = Some(serde_json::to_string(&clock).unwrap());
     }
 
     fn resolve_conflict(&self, local: &Note, remote: &Note) -> Resolution {
-        let lc = Self::parse_clock(&local.vector_clock);
-        let rc = Self::parse_clock(&remote.vector_clock);
+        let lc = parse_clock(&local.vector_clock);
+        let rc = parse_clock(&remote.vector_clock);
         if Self::happens_before(&lc, &rc) { return Resolution::Remote; }
         if Self::happens_before(&rc, &lc) { return Resolution::Local; }
         // współbieżne — fallback do znacznika czasu
@@ -141,6 +155,7 @@ impl ORSetState {
     pub fn merge(&self, remote: &ORSetState) -> ORSetState {
         let mut tombstones = self.tombstones.clone();
         tombstones.extend(remote.tombstones.iter().cloned());
+        tombstones.sort();
         tombstones.dedup();
 
         let all_ids: std::collections::HashSet<_> = self
@@ -169,21 +184,34 @@ impl ORSetState {
     }
 }
 
-pub struct ORSetStrategy;
+pub struct ORSetStrategy {
+    pub device_id: String,
+}
 
 impl SyncStrategy for ORSetStrategy {
     fn name(&self) -> &str { "ORSet" }
 
     fn prepare_operation(&self, op: &mut Operation) {
         op.timestamp = now_ms();
+        let mut clock: VectorClock = parse_clock(&op.vector_clock);
+        *clock.entry(self.device_id.clone()).or_insert(0) += 1;
+        op.vector_clock = Some(serde_json::to_string(&clock).unwrap());
     }
 
-    fn resolve_conflict(&self, _local: &Note, remote: &Note) -> Resolution {
-        // OR-Set merge odbywa się na poziomie zbioru notatek
-        // dla pojedynczej notatki — używamy add-wins
-        Resolution::Remote
+    // Reguła add-wins na poziomie istnienia notatki (jak merge_orset w Pythonie):
+    // usunięcie przegrywa ze współbieżną edycją, dwie współbieżne edycje — LWW.
+    fn resolve_conflict(&self, local: &Note, remote: &Note) -> Resolution {
+        let lc = parse_clock(&local.vector_clock);
+        let rc = parse_clock(&remote.vector_clock);
+        if VectorClockLWWStrategy::happens_before(&lc, &rc) { return Resolution::Remote; }
+        if VectorClockLWWStrategy::happens_before(&rc, &lc) || (lc == rc && !lc.is_empty()) { return Resolution::Local; }
+        if local.is_deleted != remote.is_deleted {
+            return if local.is_deleted { Resolution::Remote } else { Resolution::Local };
+        }
+        if remote.updated_at > local.updated_at { Resolution::Remote } else { Resolution::Local }
     }
 }
+
 use std::fs::OpenOptions;
 use std::io::Write;
 
